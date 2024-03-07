@@ -6,11 +6,11 @@ DTNE (diffusive topology neighbor embedding) is a python tool which establish a 
 ### Installation
 
 install the package DTNE by running the following command in the terminal:
-"pip install .'
+`pip install .`
 
 ### Quick Start
 
-you can run DTNE as follows If you have loaded a data matrix 'X' in Python :
+you can run DTNE as follows If you have loaded a data matrix `X` in Python :
 ```
 from dtne import *
 
