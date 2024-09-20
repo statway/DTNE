@@ -14,79 +14,93 @@ warnings.simplefilter('ignore',sparse.SparseEfficiencyWarning)
 
 def epanechnikov(d, h=1):
     """
-    Epanechnikov kernel.
+    Computes the Epanechnikov kernel, a popular kernel function used for density estimation.
 
     Args:
-        d: An array of distances.
-        h: The bandwidth parameter.
+        d (np.ndarray or float): An array of distances or a single distance value.
+        h (float): The bandwidth parameter, controlling the kernel's width. Defaults to 1.
 
     Returns:
-        An array of kernel values.
+        np.ndarray or float: The kernel values where distances are within the bandwidth,
+        zero for distances outside the bandwidth.
+
     """
     return np.where(np.abs(d) <= h, 3 / (4 * h) * (1 - np.power(d / h, 2)), 0)
 
 def gauss(d, local_sigma, alpha=1):
     """
-    Calculates the Gaussian kernel.
+    Computes a Gaussian kernel.
 
     Args:
-        d (float): The distance value.
-        local_sigma (float): The sigma value for the Gaussian function.
-        alpha (float, optional): The alpha value for the Gaussian function. Defaults to 1.
+        d (float or np.ndarray): The distance(s) for which to compute the Gaussian kernel.
+        local_sigma (float): The scale (sigma) parameter for the Gaussian function.
+        alpha (float, optional): Controls the sharpness of the kernel. Defaults to 1.
 
     Returns:
-        float: The value of the Gaussian function.
+        float or np.ndarray: The Gaussian kernel values corresponding to the input distances.
     """
 
     return np.exp(-np.power(d / local_sigma, alpha))
 
 def box(d,local_sigma):
     """
-    Compute the box kernel.
+    Computes the box kernel (also known as the rectangular kernel).
+
+    This kernel assigns a value of 1 if the distance is within a given threshold (local_sigma),
+    and 0 otherwise. It's commonly used in simple forms of density estimation.
 
     Args:
-        d (numpy.ndarray): The input array.
-        local_sigma (float): The threshold value.
+        d (numpy.ndarray or float): The input distances.
+        local_sigma (float): The threshold value (cutoff distance).
 
     Returns:
-        numpy.ndarray: The result of applying the box kernel.
+        numpy.ndarray or float: 
+        The box kernel values. Returns 1 if the distance is within local_sigma, 0 otherwise.
+
     """
     return np.where(d <= local_sigma, 1, 0)
 
 
 def mix_decay(d,local_sigma,alpha=1):
-    """Apply Gaussian decay to the input distance.
+    """
+    The function returns 1 for distances less than or equal to local_sigma, and applies
+    an exponential Gaussian decay for larger distances. This can be useful when modeling
+    a smooth decay of influence with distance.
 
     Args:
-        d (ndarray): The input distance.
-        local_sigma (float): The standard deviation of the Gaussian kernel.
-        alpha (float, optional): The decay parameter. Defaults to 1.
+        d (numpy.ndarray or float): The input distances.
+        local_sigma (float): The cutoff or threshold distance for switching between constant and decayed values.
+        alpha (float, optional): The decay rate. Defaults to 1.
 
     Returns:
-        ndarray: The decayed values based on the Gaussian kernel.
+        numpy.ndarray or float: 
+        The mixed decayed values, where distances less than local_sigma will return 1, and larger distances follow a decayed Gaussian function.
     """
     return np.where( d <= local_sigma, 1, np.exp(- np.power(d/local_sigma,alpha)))
 
 
 
 def mix_kernel(data, k_neighbors, delta=1, alpha=1):
-    """
-    Compute a kernel matrix.
+    """    
+    Compute a mixed kernel matrix using a combination of box and Gaussian decay kernels.
 
-    Parameters:
-    - data: array-like, shape (n_samples, n_features)
-        The input data.
-    - k_neighbors: int
-        The number of nearest neighbors to consider.
-    - delta: float, optional (default=1)
-        Scaling factor for local sigma computation.
-    - alpha: float, optional (default=1)
-        Parameter for the gauss_decay kernel.
+    Args:
+        data (array-like, shape (n_samples, n_features)): 
+            The input data points.
+        k_neighbors (int): 
+            The number of nearest neighbors to consider for each point.
+        delta (float, optional, default=1): 
+            Scaling factor for computing the local sigma (spread parameter) for the decay.
+        alpha (float, optional, default=1): 
+            Parameter for the Gaussian decay function that controls the rate of decay.
 
     Returns:
-        tuple: A tuple containing:
-        - kernel_tilde (scipy.sparse.csr_matrix): The normalized box kernel matrix.
-        - knn_indices (np.ndarray): The indices of the k nearest neighbors for each data point.
+        tuple:
+        - kernel_tilde (scipy.sparse.csr_matrix): 
+            The normalized, symmetric kernel matrix based on the nearest neighbors.
+        - knn_indices (np.ndarray): 
+            Indices of the k nearest neighbors for each point.
+
     """
 
     n_samples = data.shape[0] 
@@ -120,17 +134,24 @@ def mix_kernel(data, k_neighbors, delta=1, alpha=1):
     return kernel_tilde,knn_indices
 
 def box_kernel(data, k_neighbors):
-    """
-      Computes a box kernel matrix for the given data.
+    """    
+    Computes a box kernel matrix for the given data using the k-nearest neighbors.
+    In this kernel, all distances to the k-nearest neighbors are assigned a value of 1, 
+    meaning that each data point is equally weighted within its neighborhood. And then normalize the kernel matrix.
 
     Args:
-        data (np.ndarray): The data matrix (n_samples, n_features).
-        k_neighbors (int): The number of neighbors to consider for each data point.
+        data (np.ndarray): 
+            The input data matrix with shape (n_samples, n_features).
+        k_neighbors (int): 
+            The number of nearest neighbors to consider for each data point.
 
     Returns:
-        tuple: A tuple containing:
-        - kernel_tilde (scipy.sparse.csr_matrix): The normalized box kernel matrix.
-        - knn_indices (np.ndarray): The indices of the k nearest neighbors for each data point.
+        tuple:
+        - kernel_tilde (scipy.sparse.csr_matrix): 
+            The normalized box kernel matrix, where connections between neighbors are weighted by degree normalization.
+        - knn_indices (np.ndarray): 
+            The indices of the k nearest neighbors for each data point.
+
     """
 
     n_samples = data.shape[0] 
@@ -155,19 +176,25 @@ def box_kernel(data, k_neighbors):
 
 
 def box_kernel2(data, k_neighbors, delta=1):
-    """
-    Compute a kernel matrix using the box kernel.
+    """    
+    Compute a kernel matrix using the box kernel and handle disconnected components using minimum spanning trees.
+    This method builds a kernel matrix using a box function to define the influence of neighbors, and if disconnected 
+    components exist, it uses a minimum spanning tree (MST) to connect them.
 
-    Parameters:
-    - data: numpy array, input data points
-    - k_neighbors: int, number of nearest neighbors to consider
-    - delta: float, scaling factor for local sigmas
-    - alpha: float, scaling factor for the box kernel
+    Args:
+        data: numpy.ndarray, shape (n_samples, n_features)
+            The input data points.
+        k_neighbors: int
+            The number of nearest neighbors to consider for each data point.
+        delta: float, optional (default=1)
+            A scaling factor for local sigma computation that controls the bandwidth of the box kernel.
 
     Returns:
-        tuple: A tuple containing:
-        - kernel_tilde (scipy.sparse.csr_matrix): The normalized box kernel matrix.
-        - knn_indices (np.ndarray): The indices of the k nearest neighbors for each data point.
+        tuple:
+        - kernel_tilde (scipy.sparse.csr_matrix): 
+            The normalized box kernel matrix.
+        - knn_indices (np.ndarray): 
+            The indices of the k nearest neighbors for each data point.
     """
 
     n_samples = data.shape[0] 
@@ -216,21 +243,21 @@ def box_kernel2(data, k_neighbors, delta=1):
 
 def gauss_kernel(data, k_neighbors, delta=1, alpha=1):
     """
-    Compute a gauss kernel matrix.
+    Compute a Gaussian kernel matrix.
 
-    Parameters:
-    - data: array-like, shape (n_samples, n_features)
-        The input data.
-    - k_neighbors: int
-        The number of nearest neighbors to consider.
-    - delta: float, optional (default=1)
-        Scaling factor for local sigma computation.
-    - alpha: float, optional (default=1)
-        Parameter for the gauss_decay kernel.
+    Args:
+        data: array-like, shape (n_samples, n_features)
+            The input data points.
+        k_neighbors: int
+            The number of nearest neighbors to consider for each data point.
+        delta: float, optional (default=1)
+            A scaling factor for local sigma computation that controls the bandwidth of the Gaussian kernel.
+        alpha: float, optional (default=1)
+            A parameter controlling the decay of the Gaussian function.
 
     Returns:
-        tuple: A tuple containing:
-        - kernel_tilde (scipy.sparse.csr_matrix): The normalized box kernel matrix.
+        tuple:
+        - kernel_tilde (scipy.sparse.csr_matrix): The normalized Gaussian kernel matrix.
         - knn_indices (np.ndarray): The indices of the k nearest neighbors for each data point.
     """
 
@@ -269,13 +296,15 @@ def gauss_kernel(data, k_neighbors, delta=1, alpha=1):
 def scanpy_kernel(data, knn=5, method='umap'):
     """
     This function creates a kernel matrix using scanpy and graph-tool libraries.
+
     Args:
-        data: A numpy array representing the data to be used for kernel construction.
+        data: A numpy array (n_samples, n_features) representing the data to be used for kernel construction.
         knn: The number of nearest neighbors to consider when constructing the adjacency matrix (default: 5).
         method: The dimensionality reduction method to use for neighbor search (default: 'umap').
+                Other possible values could be 'gauss' or 'pca', depending on Scanpy's implementation.
 
     Returns:
-        A kernel matrix represented as a sparse matrix from graph-tool.
+        A kernel matrix represented as a sparse matrix from Graph-tools.
     """
  
     try:
@@ -294,18 +323,21 @@ def scanpy_kernel(data, knn=5, method='umap'):
 
 def phate_kernel(data, knn = 5, decay = 40.0, anisotropy = 0, n_pca= None, **kwargs):
     """
-      This function creates a kernel matrix using the PHATE method with the help of the graph-tool library.
+    This function creates a kernel matrix using the PHATE method with the help of the graph-tool library.
 
     Args:
-        data: A numpy array representing the data to be used for kernel construction.
+        data: A numpy array (n_samples, n_features) representing the data to be used for kernel construction.
         knn: The number of nearest neighbors to consider when constructing the graph (default: 5).
-        decay: The decay parameter that controls the influence of neighboring points (default: 40.0). Higher decay values lead to smoother kernels.
-        anisotropy: The anisotropy parameter that controls the influence of points in different directions (default: 0). Non-zero values introduce anisotropy in the kernel.
-        n_pca: The number of principal components to use for dimensionality reduction before building the graph (default: None, uses all components).
+        decay: The decay parameter that controls the influence of neighboring points (default: 40.0). 
+               Higher decay values lead to smoother kernels by controlling the decay of the kernel weights.
+        anisotropy: The anisotropy parameter that controls the influence of points in different directions (default: 0). 
+                    Non-zero values introduce direction-based weighting into the kernel.
+        n_pca: The number of principal components to use for dimensionality reduction before building the graph 
+               (default: None, meaning it uses all components).
         **kwargs: Additional keyword arguments passed to the graph-tool.Graph constructor (optional).
 
     Returns:
-        A kernel matrix represented as a sparse matrix from graph-tool.
+        K: A kernel matrix represented as a sparse matrix from graph-tool.
     """
     try:
         import graphtools
@@ -319,6 +351,7 @@ def phate_kernel(data, knn = 5, decay = 40.0, anisotropy = 0, n_pca= None, **kwa
 def calc_l(lamb):
     """
     This function calculates the value of 'l' based on the entropy and its derivatives of a power series of lambda.
+
     Args:
         lamb: A float value representing the lambda parameter.
 
@@ -380,9 +413,9 @@ def eigen_kernel2(matrix):
 
     Returns:
         A tuple containing three elements:
-            - lamb: A 1D numpy array containing the eigenvalues of the kernel matrix.
-            - Phi: A 2D numpy array containing the eigenvectors of the kernel matrix (one eigenvector per column).
-            - Psi: A 2D numpy array containing the pseudoinverse of the eigenvector matrix (Phi).
+        lamb: A 1D numpy array containing the eigenvalues of the kernel matrix.
+        Phi: A 2D numpy array containing the eigenvectors of the kernel matrix (one eigenvector per column).
+        Psi: A 2D numpy array containing the pseudoinverse of the eigenvector matrix (Phi).
     """
 
     lamb, Phi = np.linalg.eig(matrix)
@@ -393,14 +426,15 @@ def eigen_kernel2(matrix):
 def compute_landmark_operator(K,labels, random_state = None):
     """
     This function computes the landmark operator based on a kernel matrix, number of landmarks, and sample labels.
+
     Args:
         K: A sparse matrix representing the kernel matrix.
         labels: A 1D numpy array containing integer labels for each sample.
         random_state: An integer (optional) to control the randomness for landmark selection (default: None).
     Returns:
         A tuple containing two elements:
-            - pmm: A 2D numpy array representing the landmark operator.
-            - pnm: A 2D numpy array representing the intermediate matrix used in the calculation.
+        pmm: A 2D numpy array representing the landmark operator.
+        pnm: A 2D numpy array representing the intermediate matrix used in the calculation.
     """
 
     landmarks = np.unique(labels)
@@ -415,100 +449,28 @@ def compute_landmark_operator(K,labels, random_state = None):
     return pmm,pnm
 
 
-
-def compute_iter_R(P,cv,n_iter):
-    """
-    Compute the rank matrix after iteration.
-    
-    Parameters
-    ----------
-    P : array-like, shape=[n_samples, n_samples]
-    cv : array-like, shape=[n_samples]
-    n_iter : int
-    
-    Returns
-    -------
-    R : array-like, shape=[n_samples, n_samples]
-    dif_R : array-like, shape=[n_samples, n_samples]
-    """
-    
-    n_samples = len(cv)
-    I = np.identity(n_samples)
-
-    R = P
-    DF = P-I
-    dif_R = np.zeros((n_samples,n_samples))
-
-    for i in range(n_iter):        # t=i+1
-        p_cv = np.power(cv,i)
-        dif_cv = (i+1)*p_cv
-        p_cv = cv*p_cv
-        C_t = np.diag(p_cv)
-
-        DF= P@DF
-        dif_C = np.diag(dif_cv)
-        R = C_t @ DF + R
-        dif_R = dif_C@DF + dif_R
-    
-    return R,dif_R
-
-def compute_infty_R(matrix,cv,mode):
+def compute_infty_R(Phi,lamb,Psi,cv,l):
     """
     Compute the rank matrix with Eigen_decomposition when the number of iterations tends to infinity 
     when the number of iterations tends to infinity.
     
-    Parameters
-    ----------
-    kernel : array-like, shape=[n_samples, n_samples]
-    cv : array-like, shape=[n_samples]
-    
-    Returns
-    -------
-    R : array-like, shape=[n_samples, n_samples]
-    dif_R : array-like, shape=[n_samples, n_samples]
-    """
-
-    n_samples = len(cv)
-
-    if mode == 1:
-        Phi,lamb,Psi = eigen_kernel(matrix)
-    elif mode == 2:
-        Phi,lamb,Psi = eigen_kernel2(matrix)
-
-    ncl = np.outer(1-cv,lamb)
-    dcl = 1-np.outer(cv,lamb)
-    
-
-    Sigma = ncl/dcl
-    R = Phi * Sigma @ Psi 
-
-    dd_f = np.power(dcl, 2)
-    lam_f = lamb * (lamb-1)
-    nd_f = np.tile(lam_f, (n_samples, 1))
-    dSigma = nd_f/dd_f
-    dif_R = Phi * dSigma @ Psi 
-
-    R[R<0] = 0
-    dif_R[R==0] = 0
-    
-    R = preprocessing.normalize(R,norm="l1",axis=1)
-
-    return R,dif_R
-
-def compute_infty_R2(Phi,lamb,Psi,cv,l):
-    """
-    Compute the rank matrix with Eigen_decomposition when the number of iterations tends to infinity 
-    when the number of iterations tends to infinity.
-    
-    Parameters
-    ----------
-    kernel : array-like, shape=[n_samples, n_samples]
-    cv : array-like, shape=[n_samples]
-    
-    Returns
-    -------
-    R : array-like, shape=[n_samples, n_samples]
-    dif_R : array-like, shape=[n_samples, n_samples]
+    Args:
+        Phi: array-like, shape (n_samples, n_samples)
+            The eigenvectors of the kernel matrix (from the eigen_kernel function).
+        lamb: array-like, shape (n_samples)
+            The eigenvalues of the kernel matrix (from the eigen_kernel function).
+        Psi: array-like, shape (n_samples, n_samples)
+            The pseudoinverse of the eigenvector matrix.
+        cv: array-like, shape (n_samples)
+            A vector representing the coefficient values for each sample.
+        l: int
+            The power parameter for lambda in the power series.
+    Returns:
+        A tuple containing two elements:
+        R: array-like, shape (n_samples, n_samples)
+            The computed rank matrix at the limit where iterations tend to infinity.
+        dif_R: array-like, shape (n_samples, n_samples)
+            The differential of the rank matrix.
     """
 
     n_samples = len(cv)
@@ -537,7 +499,9 @@ def compute_infty_R2(Phi,lamb,Psi,cv,l):
 
 
 def classic(D, n_components=2, random_state=None):
-    """Fast CMDS using random SVD, the codes of this function come from the PHATE algorithm.
+    """
+    Fast CMDS using random SVD, the codes of this function come from the PHATE algorithm.
+    Starting configuration of the embedding to initialize the SMACOF algorithm.
 
     Parameters
     ----------

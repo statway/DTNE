@@ -4,7 +4,7 @@ import pandas as pd
 import warnings
 import numpy.core.numeric as nx
 
-from scipy import spatial, linalg, sparse, stats
+from scipy import  stats
 from sklearn import cluster, decomposition, manifold, preprocessing
 from sklearn.metrics.pairwise import pairwise_distances
 
@@ -16,11 +16,33 @@ from .utils import *
 
 class DTNE(object):
     """
+    
+    Parameters:
+    -----------
+    n_neighbors: int, default=15
+        Number of nearest neighbors used for manifold learning.
+    include_self: bool, default=True
+        Whether to include the point itself in nearest neighbors.
+    delta: float, default=1
+        Scaling factor for local sigma computation.
+    alpha: float, default=1
+        Parameter for the power of init delay kernel.
+    epsilon: float, default=1e-2
+        Threshold parameter for the restart probability.
+    beta: float, default=0.1
+        Learning rate for loss optimization.
+    kernel: str, default='box'
+        Kernel function for computing the Markov matrix.
+    random_state: int, default=0
+        Seed for random number generator.
+    solver: str, default='mds'
+        Solver method used for dimensionality reduction ('mds', 'sgd', 'umap').
     """
 
     def __init__(self, n_components= 2,  verbose=0, **kwargs):
         """
         Initializes the class with default parameters.
+
         Args:
             n_components (int, optional): The number of latent components. Defaults to 2.
             verbose (int, optional): Level of verbosity. Defaults to 0.
@@ -33,15 +55,12 @@ class DTNE(object):
         self.n_samples = None
         self.n_features = None
         self.delta = None
-        self.P = None
         self.Pnm = None
         self.R = None
         self.alpha = None
         self.beta = None
         self.epsilon = None
-        self.adjacency = None
         self.Y_ = None
-        self.iter_mode = None
         self.random_state = None
         self.cv = None
         self.n_landmark = None
@@ -59,41 +78,32 @@ class DTNE(object):
         self.min_dist = None
         self.mark = 0 
         
-
+        # Set parameters provided through keyword arguments or use default values
         self.__set_params__()
 
-        if "k_neighbors" in kwargs:          # number of neighbors for kNN graph
+        if "k_neighbors" in kwargs:          
             self.k_neighbors = kwargs["k_neighbors"]
             
-        if "delta" in kwargs:                # the parameter for cKNN graph
+        if "delta" in kwargs:                
             self.delta = kwargs["delta"]
 
-        if "include_self" in kwargs:         # whether to include self-loops in adjacency matrix
+        if "include_self" in kwargs:         
             self.include_self = kwargs["include_self"]
 
-        if "fixed_d" in kwargs:              # parameter for density of weights.
-            self.fixed_d = kwargs["fixed_d"]
-
-        if "alpha" in kwargs:                # The power of the kernel matrix.
+        if "alpha" in kwargs:                
             self.alpha = kwargs["alpha"]
 
-        if "epsilon" in kwargs:              # difference threshold parameter for optimal restart probability
+        if "epsilon" in kwargs:             
             self.epsilon = kwargs["epsilon"]
 
-        if "beta" in kwargs:                 # learning rate for loss function
+        if "beta" in kwargs:                 
             self.beta = kwargs["beta"]
         
-        if "kernel" in kwargs:               # kernel of the Markov matrix
+        if "kernel" in kwargs:               
             self.kernel = kwargs["kernel"]
-  
-        if "iter_mode" in kwargs:            # mode of diffusion iteration. 
-            self.iter_mode = kwargs["iter_mode"]
         
-        if "random_state" in kwargs:         # random seed  
+        if "random_state" in kwargs:         
             self.random_state = kwargs["random_state"]
-        
-        if "n_landmark" in kwargs:           # number of landmarks
-            self.n_landmark = kwargs["n_landmark"]
 
         if "l1" in kwargs:                   # initial number of iterations for the Markov matrix
             self.l1 = kwargs["l1"]
@@ -110,7 +120,7 @@ class DTNE(object):
     
     def __set_params__(self):
         """
-        This function sets the default parameters for the class.
+        Sets default values for the parameters of the class.
         """
 
         self.k_neighbors = 15
@@ -119,11 +129,9 @@ class DTNE(object):
         self.alpha = 1
         self.epsilon = 1e-2
         self.beta = 0.1
-        self.iter_mode = "infty"
         self.random_state = 0
         self.kernel = 'box'
         self.solver = 'mds'
-        # self.min_dist = 0.3
 
 
         
@@ -131,11 +139,11 @@ class DTNE(object):
         """
         Computes the Markov matrix for the given data.
 
-        Args:
-            **params: Keyword arguments that can override default parameters.
+        Args: 
+            Keyword arguments that can override default parameters.
+
         Returns:
-            The computed Markov matrix.
-                    
+            The computed Markov matrix.                    
         """
 
         # Get data or raise error if not provided.
@@ -144,6 +152,7 @@ class DTNE(object):
         elif self.X is None:
             raise ValueError("data X must be specified.")
         
+         # Adjust params if specified in params
         if "delta" in params:             
             self.delta = params["delta"]
 
@@ -164,7 +173,6 @@ class DTNE(object):
             pca = decomposition.PCA(n_components=self.n_dims,random_state=self.random_state)
             pca_features = pca.fit_transform(self.X)
             self.X = pca_features
-
         elif self.n_features > 500:
             pca = decomposition.PCA(n_components=100,random_state=self.random_state)
             pca_features = pca.fit_transform(self.X)
@@ -199,36 +207,36 @@ class DTNE(object):
         
     def learn_vectors(self, **params):
         """
-        Learns the transformed Markov matrix(R).
+        This method computes the transformed Markov matrix(R) for the given data, and iteratively adjusts the damping factor vector (cv) using a gradient descent method.
 
-        Args:
-        **params: Keyword arguments to override default parameters.
+        Args: 
+            Keyword arguments to override default parameters, such as:
+            alpha: float, the alpha parameter (transition probability)
+            epsilon: float, the convergence threshold for cv
+            beta: float, the learning rate for the gradient descent
+            l1: int, the initial number of iterations for Markov matrix computation
+            l2: int, the number of iterations for PPR matrix
+            X: np.ndarray, the input data matrix
+            cv: np.ndarray, initial damping factor vector
         Returns:
-        The transformed Markov matrix (R) and damping factor vector (cv).
-
+            R (np.ndarray): The learned transformed Markov matrix.
+            cv (np.ndarray): The refined damping factor vector.
         """
 
         # Get parameters from input or use defaults.
         if "alpha" in params:
-            alpha = params["alpha"]
-        else:
-            alpha = self.alpha
+            self.alpha = params["alpha"]
+
         if "X" in params:
             self.X = params["X"]
         elif self.X is None:
             raise ValueError("data X must be specified.")
+        
         if "epsilon" in params:
-            epsilon = params["epsilon"]
-        else:
-            epsilon = self.epsilon
+            self.epsilon = params["epsilon"]
+
         if "beta" in params:
-            beta = params["beta"]
-        else:
-            beta = self.beta
-        if "iter_mode" in params:
-            iter_mode = params["iter_mode"]
-        else:
-            iter_mode = self.iter_mode
+            self.beta = params["beta"]
 
         if "l1" in params:                   
             self.l1 = params["l1"]
@@ -276,7 +284,7 @@ class DTNE(object):
         elif self.cv == None:
             cv = stats.uniform.rvs(loc=0.5, scale=0.2, size=n_samples, random_state= self.random_state).round(2)
 
-        if iter_mode == "infty"  and self.mode == 1:
+        if  self.mode == 1:
             Phi,lamb,Psi = eigen_kernel(self.adjacency_kernel)
             if self.l1 is None:
                 self.l1 = calc_l(lamb)
@@ -285,7 +293,7 @@ class DTNE(object):
             Lamb_l = np.power(lamb,self.l2)
             A = Phi * Lamb_l @ Psi
 
-        if iter_mode == "infty"  and self.mode == 2:
+        elif  self.mode == 2:
             Phi,lamb,Psi = eigen_kernel2(P)
             if self.l1 is None:
                 self.l1 = calc_l(lamb)
@@ -299,17 +307,18 @@ class DTNE(object):
         while True:
             j = j  + 1
 
-            if iter_mode == "infty":
-                R,dif_R = compute_infty_R2(Phi,lamb,Psi,cv,self.l1)
+            # Compute rank matrix R and its differential
+            R,dif_R = compute_infty_R(Phi,lamb,Psi,cv,self.l1)
                 
+            # Compute gradient step
             Q = R.copy()
             Q[Q==0] = np.inf
-
             Dif = - A/Q * dif_R
             dif_v = Dif.sum(axis=1) 
             old_cv  = cv
-            cv = old_cv - beta * dif_v
+            cv = old_cv - self.beta * dif_v
 
+            # Check and handle boundary conditions for cv
             count_high_cv = (cv>1).sum() 
             count_low_cv = (cv<0).sum()
             count_cv = count_high_cv + count_low_cv
@@ -324,19 +333,21 @@ class DTNE(object):
                     cv[cv<0] = 0.01
                 if j > 30:
                     break
-                                
+
+            # Check for convergence                    
             diff = cv - old_cv 
             if self.verbose > 0:
                 if j % 10 == 0:
                     print("The number of iterations of gradient descent method is:",j,
                       "the average cv is ",np.mean(cv), " and the max diff is", max(np.abs(diff)))
 
-            if (np.abs(diff)<epsilon).all():
+            if (np.abs(diff)<self.epsilon).all():
                 break
 
             if j > 30:
                 break        
-            
+
+        # Update class attributes with the learned cv and R    
         self.cv = cv
         self.R = R
 
@@ -345,14 +356,15 @@ class DTNE(object):
 
 
     def compute_embedding(self, **params):
-        """
-        Computes the diffusion embedding of the data.
+        """        
+        Computes the diffusion embedding of the data using the learned Markov matrix (R) and constructs the manifold distance matrix (H). 
+        This function calls `learn_vectors` to obtain the transformed Markov matrix (R) 
+        and the damping factor vector (cv), normalizes the matrix, and then computes pairwise distances in the diffusion embedding space.
 
-        Args:
-            **params: Keyword arguments that can be used to override default parameters.
+        Args: 
+            Keyword arguments that can be used to override default parameters.
         Returns:
-            The diffusion embedding(manifold distance matrix) of the data.
-
+            np.ndarray: The diffusion embedding (manifold distance matrix) of the data.
         """
 
 
@@ -371,17 +383,18 @@ class DTNE(object):
     
     def order_cells(self, **params):
         """
-        Orders cells based on their distances to other cells.
+        Orders cells based on their distances to other cells in the dataset. This is typically used
+        to arrange cells in a sequence according to their manifold distances, which can be useful for 
+        trajectory inference or pseudotime analysis.
 
         Args:
-            params (dict): A dictionary containing parameters.
-                - root_cells (list): A list of root cell indices.
+            root_cells (list): A list of root cell indices that serve as starting points for ordering.
 
         Returns:
-            np.ndarray: A numpy array storing the ordered cell distances.
+            np.ndarray: A numpy array containing the normalized distances (diff_time) of each cell  relative to the root cells.
 
         Raises:
-            ValueError: If root_cells is not specified.
+            ValueError: If `root_cells` is not provided in the params.
         
         """
 
@@ -426,25 +439,34 @@ class DTNE(object):
     
     def cluster_cells(self,**params):
         """
-        Clusters cells into groups based on a precomputed distance matrix.
-        Args:
-            **params: Keyword arguments that specify clustering parameters.
-                * n_clusters (int): The number of clusters to generate. 
-                * cluster_method (str, optional): The clustering method to use.  Can be "kmedoids", "agglo" (hierarchical clustering), or "dbscan". Defaults to "agglo".
-                * eps (float, optional): The epsilon parameter for DBSCAN clustering. Defaults to 0.5.
-                * min_samples (int, optional): The minimum number of samples in a DBSCAN cluster. Defaults to 5.
+        Clusters cells into distinct groups based on the precomputed distance matrix (self.dists).
+        This function supports various clustering methods including agglomerative (Hierarchical) clustering, 
+        KMedoids, and DBSCAN, allowing flexible clustering of cells depending on the user's needs. 
+        
+        Args: 
+            cluster_method (str, optional): The clustering method to use, and 'agglo' as default clustering methods. Options include:
+                * "kmedoids" for KMedoids clustering.
+                * "agglo" or "hiera" for Agglomerative Clustering (default: "agglo").
+                * "dbscan" for Density-Based Spatial Clustering of Applications with Noise (DBSCAN).
+            n_clusters (int): The number of clusters to generate (used for KMedoids and Agglomerative).
+            eps (float, optional): The epsilon parameter for DBSCAN clustering. Defaults to 0.5.
+            min_samples (int, optional): The minimum number of samples in a DBSCAN cluster. Defaults to 5.
         Returns:
-            A numpy array containing the cluster labels for each cell.
+            np.ndarray: An array containing the cluster labels for each cell.
         """
-
-        if "n_clusters" in params:
-            n_clusters = params["n_clusters"]
         
         # Perform clustering based on chosen method.
         if "cluster_method" in params:
             cluster_method = params["cluster_method"]
         else:
             cluster_method = "agglo"
+        
+        if cluster_method == "kmedoids" or cluster_method == "agglo" or cluster_method == "hiera":
+            # Get the number of clusters if specified
+            if "n_clusters" in params:
+                n_clusters = params["n_clusters"]
+            else:
+                n_clusters = 8
 
         if cluster_method == "kmedoids":
             from sklearn_extra.cluster import KMedoids
@@ -520,6 +542,7 @@ class DTNE(object):
         if self.n_landmark is None or self.n_landmark == self.n_samples:
             clusters = labels
         else:
+            # If using landmarks, map landmark clusters to the original data points
             clusters = np.array([labels[i] for i in self.cluster_labels])
 
         return clusters
@@ -528,32 +551,40 @@ class DTNE(object):
 
 
     def fit(self,  **params):
-        """
-        Fits the diffusion embedding and computes the low-dimensional visualization of the data.
-        Args:
-            **params: Keyword arguments that can be used to override default parameters.
-                * n_components (int, optional): The number of dimensions for the low-dimensional embedding. Defaults to the value in `self.n_components`.
-                * random_state (int, optional): Random seed for the dimensionality reduction algorithm. Defaults to the value in `self.random_state`.
+        """        
+        Fits the diffusion embedding and computes the low-dimensional visualization of the data using the specified dimensionality reduction method (e.g., MDS, UMAP, SGD).
+        This function computes pairwise distances using `compute_embedding` and then applies dimensionality reduction to project the data into a lower-dimensional space.
+
+        Args: 
+            n_components (int, optional): Number of dimensions for the low-dimensional embedding.
+                Defaults to `self.n_components`.
+            random_state (int, optional): Random seed for the dimensionality reduction algorithm.
+                Defaults to `self.random_state`.
+            solver (str, optional): The solver method to use for dimensionality reduction, can be:
+                * "mds" (Multidimensional Scaling)
+                * "sgd" (Stochastic Gradient Descent for MDS)
+                * "umap" (Uniform Manifold Approximation and Projection)
+            min_dist (float, optional): Minimum distance for UMAP.
+            root_cells (list, optional): Indices of root cells for cell ordering (used for pseudotime analysis).
+
         Returns:
-            The object itself (enables method chaining).
+            self: The object itself, enabling method chaining (e.g., `obj.fit().transform()`).
         """
         
         if "n_components" in params:
-            n_components = params["n_components"]
-        else:
-            n_components = self.n_components
+            self.n_components = params["n_components"]
+        n_components = self.n_components
+
         if "random_state" in params:
-            random_state = params["random_state"]
-        else:
-            random_state = self.random_state
+            self.random_state = params["random_state"]
+        random_state = self.random_state
         
         if "solver" in params: 
             self.solver = params['solver']
         
         if self.solver == 'mds' or self.dists == None:
-            dists = self.compute_embedding(**params)
-        else:    # Avoiding repeated calculations
-            dists = self.dists
+            self.dists = self.compute_embedding(**params)
+        dists = self.dists
 
 
         # Perform dimensionality reduction based on the chosen solver.
@@ -593,18 +624,21 @@ class DTNE(object):
 
 
     def fit_transform(self, X):
-        """
+        """        
         Fits the diffusion embedding and computes the low-dimensional visualization of the data in a single step.
-        Args:
-            X (np.ndarray): The data to be embedded.
+        This function combines both the fitting and transformation steps into one. It fits the model to the input data
+        and then returns the low-dimensional embedding.
 
+        Args:
+            X (np.ndarray): The data to be embedded. This should be an array where each row represents a sample and 
+                        each column represents a feature.
         Returns:
-            np.ndarray: The low-dimensional embedding of the data.
+            np.ndarray: The low-dimensional embedding of the data after applying the chosen dimensionality reduction method.
         """
 
         self.X = X
 
-        self.fit( X = self.X) 
+        self.fit(X = self.X) 
 
         self.mark = 1 
 
