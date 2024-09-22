@@ -1,9 +1,9 @@
 version: 2
  
 build:
-  os: "ubuntu-22.04"
+  os: "ubuntu-lts-latest"
   tools:
-    python: "3.10"
+    python: "3.12"
   jobs:
     post_create_environment:
       - python -m pip install sphinx-autobuild sphinx_rtd_theme
@@ -14,8 +14,12 @@ python:
   install:
     - method: pip
       path: .
+      extra_requirements:
+        - docs
 
+# Build documentation in the docs/ directory with Sphinx
 
 sphinx:
-  fail_on_warning: false
+  builder: html
   configuration: docs/source/conf.py
+  fail_on_warning: true
