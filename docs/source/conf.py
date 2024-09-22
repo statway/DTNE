@@ -21,8 +21,6 @@ project = 'DTNE'
 copyright = '2024, jonway'
 author = 'jonway'
 
-# The full version, including alpha/beta/rc tags
-release = '0.5'
 
 
 # specify the master doc, otherwise the build at read the docs fails
@@ -67,4 +65,3 @@ html_theme = 'alabaster'
 
 import sphinx_rtd_theme
 html_theme = "sphinx_rtd_theme"
-html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
