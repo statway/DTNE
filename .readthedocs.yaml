@@ -9,7 +9,12 @@ python:
   install:
     - method: pip
       path: .
- 
+
+jobs:
+    post_create_environment:
+      - python -m pip install sphinx-autobuild sphinx_rtd_theme
+      - python -m pip install nbsphinx
+      - python -m pip install recommonmark
 sphinx:
   fail_on_warning: false
   configuration: docs/source/conf.py
