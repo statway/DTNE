@@ -1,8 +1,5 @@
 import numpy as np
-import scipy as sp
-import pandas as pd
 import warnings
-import numpy.core.numeric as nx
 
 from scipy import  stats
 from sklearn import cluster, decomposition, manifold, preprocessing

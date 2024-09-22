@@ -1,10 +1,7 @@
 import numpy as np
-import scipy as sp
-import pandas as pd
-import sys
 
-from scipy import spatial, linalg, sparse,stats,optimize
-from sklearn import decomposition,cluster,neighbors,preprocessing
+from scipy import linalg, sparse,stats 
+from sklearn import decomposition,neighbors,preprocessing
 from sklearn.metrics.pairwise import pairwise_distances
 # from pynndescent import NNDescent
 
