@@ -13,8 +13,7 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath('./../..'))
-# sys.path.append('..')
+sys.path.insert(0, os.path.abspath('./../../dtne/'))
 
 # -- Project information -----------------------------------------------------
 
@@ -25,6 +24,9 @@ author = 'jonway'
 # The full version, including alpha/beta/rc tags
 release = '0.5'
 
+
+# specify the master doc, otherwise the build at read the docs fails
+master_doc = 'index'
 
 # -- General configuration ---------------------------------------------------
 
