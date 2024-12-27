@@ -43,8 +43,6 @@ For tutorials and full documentation and DTNE's API, see our [Readthedocs page](
 Several example Jupyter notebooks are provided in the `notebooks/` directory, demonstrating DTNE’s usage on various single-cell datasets.
 The single-cell datasets can be downloaded from link [GoogleDrive](https://drive.google.com/drive/folders/1UFKBWFJ7BhzcABpa4DZXssthQuTGMfmU?usp=sharing).
 
-## Citation
-If you use DTNE in your research, please cite the paper.
 
 ## License
 DTNE is licensed under the MIT License.
