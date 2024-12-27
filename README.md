@@ -1,6 +1,6 @@
 # DTNE - Diffusive Topology Neighbor Embedding
 
-DTNE (Diffusive Topology Neighbor Embedding) is a Python tool that implements a novel manifold learning framework. By leveraging a diffusive process, DTNE constructs a manifold distance matrix, enabling key analyses such as dimensionality reduction, pseudotime ordering, and cluster identification, providing valuable insights into complex datasets.
+DTNE (Diffusive Topology Neighbor Embedding) is a Python tool that implements a novel manifold learning framework for the forthcoming paper "**Diffusive topology preserving manifold distances for single-cell data analysis**". By leveraging a diffusive process, DTNE constructs a manifold distance matrix, enabling key analyses such as dimensionality reduction, pseudotime ordering, and cluster identification, providing valuable insights into complex datasets.
 
 ## Features
 
@@ -42,7 +42,6 @@ DTNE requires input data in the form of a high-dimensional matrix. Suppose you h
 For tutorials and full documentation and DTNE's API, see our [Readthedocs page](https://dtne.readthedocs.io/).
 Several example Jupyter notebooks are provided in the `notebooks/` directory, demonstrating DTNE’s usage on various single-cell datasets.
 The single-cell datasets can be downloaded from link [GoogleDrive](https://drive.google.com/drive/folders/1UFKBWFJ7BhzcABpa4DZXssthQuTGMfmU?usp=sharing).
-
 
 ## License
 DTNE is licensed under the MIT License.
