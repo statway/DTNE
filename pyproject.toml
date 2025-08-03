@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dtne"
+authors = [
+    {name = "Jiangyong Wei", email = "weijy026a@outlook.com"},
+]
+description = "Implementation of Diffusive Topology Neighbor eEbedding"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = ['numpy', 'scipy', 'scikit-learn', 'matplotlib']
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dtne.__version__"}
+
+[project.urls]
+Homepage = "https://github.com/statway/dtne"
