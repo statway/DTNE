@@ -10,7 +10,6 @@ DTNE (Diffusive Topology Neighbor Embedding) is a Python tool that implements a 
 
 ## Installation
 
-DTNE has been uploaded to PyPI, and can be downloaded using pip: ``pip install dtne``.
 Alternatively, you can ``git clone https://github.com/statway/DTNE.git``, and install the package by running the following command in the terminal: ``pip install .``.
 
 ## Quick Start
@@ -44,4 +43,5 @@ Several example Jupyter notebooks are provided in the `notebooks/` directory, de
 The single-cell datasets can be downloaded from link [GoogleDrive](https://drive.google.com/drive/folders/1UFKBWFJ7BhzcABpa4DZXssthQuTGMfmU?usp=sharing).
 
 ## License
+
 DTNE is licensed under the MIT License.
