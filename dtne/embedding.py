@@ -1,383 +1,332 @@
 import numpy as np
 import warnings
 
-from scipy import  stats
-from sklearn import cluster, decomposition, manifold, preprocessing
-from sklearn.metrics.pairwise import pairwise_distances
+from scipy import  stats,sparse,spatial,linalg
+from sklearn import cluster, decomposition, manifold, preprocessing,neighbors
 
 warnings.simplefilter(action='ignore', category=UserWarning)
 
-
 from .utils import *
-
+from .ee import *
 
 class DTNE(object):
-    """
-    
-    Parameters:
-    -----------
-    n_neighbors: int, default=15
-        Number of nearest neighbors used for manifold learning.
-    include_self: bool, default=True
-        Whether to include the point itself in nearest neighbors.
-    delta: float, default=1
-        Scaling factor for local sigma computation.
-    alpha: float, default=1
-        Parameter for the power of init delay kernel.
-    epsilon: float, default=1e-2
-        Threshold parameter for the restart probability.
-    beta: float, default=0.1
-        Learning rate for loss optimization.
-    kernel: str, default='box'
-        Kernel function for computing the Markov matrix.
-    random_state: int, default=0
-        Seed for random number generator.
-    solver: str, default='mds'
-        Solver method used for dimensionality reduction ('mds', 'sgd', 'umap').
-    """
 
-    def __init__(self, n_components= 2,  verbose=0, **kwargs):
-        """
-        Initializes the class with default parameters.
+    def __init__(self,
+        n_components: int = 2,
+        k_neighbors: int = 15,
+        include_self: bool = True,
+        kernel: str = 'box',
+        random_state: int = 0,
+        beta: float = 0.1, 
+        epsilon: float = 1e-2,
+        verbose: int = 0,
+        **kwargs) -> None:
 
-        Args:
-            n_components (int, optional): The number of latent components. Defaults to 2.
-            verbose (int, optional): Level of verbosity. Defaults to 0.
-            **kwargs: Additional keyword arguments that can be used to override default parameters.
-        """
-
-        self.n_components = n_components
-        self.verbose = verbose
         self.X = None
         self.n_samples = None
         self.n_features = None
-        self.delta = None
+        self.Y_ = None
+        self.X_pca = None
+        self.dists = None
+        self.K = None
+        self.K2 = None
+
+        self.n_landmark = None
         self.Pnm = None
         self.R = None
-        self.alpha = None
-        self.beta = None
-        self.epsilon = None
-        self.Y_ = None
-        self.random_state = None
-        self.cv = None
-        self.n_landmark = None
-        self.G = None
-        self.dists = None
-        self.root_cells = None
-        self.n_dims = None
-        self.solver = None
-        self.l1 = None
+        self.l = None
         self.l2 = None
-        self.mode = None
-        self.adjacency_knn_indices = None
-        self.adjacency_kernel = None
-        self.cluster_labels = None
+        self.X_labels = None
+        self.Ym = None
         self.min_dist = None
-        self.mark = 0 
-        
-        # Set parameters provided through keyword arguments or use default values
-        self.__set_params__()
+        self.sigmas = None
+        self.msigmas = None
+        self.lmsigmas = None
+        self.n_pca = None
+        self.root_cells = None
+        self.terminal_cells = None
+        self.adjacency_knn_indices = None
 
-        if "k_neighbors" in kwargs:          
-            self.k_neighbors = kwargs["k_neighbors"]
-            
-        if "delta" in kwargs:                
+        
+        self.n_components = n_components
+        self.k_neighbors = k_neighbors
+        self.include_self = include_self
+        self.kernel = kernel
+        self.random_state = random_state
+        self.beta = beta
+        self.epsilon = epsilon
+        self.verbose = verbose
+        
+        # self.__set_params__()
+
+        if "delta" in kwargs:                # Scaling factor for kernel.        
             self.delta = kwargs["delta"]
-
-        if "include_self" in kwargs:         
-            self.include_self = kwargs["include_self"]
-
-        if "alpha" in kwargs:                
+        else:
+            self.delta = 2
+        if "alpha" in kwargs:                # The decay rate for kernel.  
             self.alpha = kwargs["alpha"]
+        else:
+            self.alpha = 1
 
-        if "epsilon" in kwargs:             
-            self.epsilon = kwargs["epsilon"]
-
-        if "beta" in kwargs:                 
-            self.beta = kwargs["beta"]
-        
-        if "kernel" in kwargs:               
-            self.kernel = kwargs["kernel"]
-        
-        if "random_state" in kwargs:         
-            self.random_state = kwargs["random_state"]
-
-        if "l1" in kwargs:                   # initial number of iterations for the Markov matrix
-            self.l1 = kwargs["l1"]
-        if "l" in kwargs:                    # alias for l1
-            self.l1 = kwargs["l"]
-        if "l2" in kwargs:                   # initial number of iterations for PPR matrix
-            self.l2 = kwargs["l2"]
         if "solver" in kwargs: 
             self.solver = kwargs['solver']
-        if "min_dist" in kwargs: 
-            self.min_dist = kwargs['min_dist']
+        else:
+            self.solver = "mds"
+
+        if "n_landmark" in kwargs: 
+            self.n_landmark = kwargs['n_landmark']
+
+        if "l1" in kwargs:                   # initial number of iterations for the Markov matrix
+            self.l = kwargs["l1"]
+        if "l" in kwargs:                    # alias for l1
+            self.l = kwargs["l"]
+        if "l2" in kwargs:                   # initial number of iterations for PPR matrix
+            self.l2 = kwargs["l2"]
 
 
+    def __set_params__(self) -> None:
+
+        pass
     
-    def __set_params__(self):
-        """
-        Sets default values for the parameters of the class.
-        """
 
-        self.k_neighbors = 15
-        self.delta = 1
-        self.include_self = True
-        self.alpha = 1
-        self.epsilon = 1e-2
-        self.beta = 0.1
-        self.random_state = 0
-        self.kernel = 'box'
-        self.solver = 'mds'
+    def compute_kernel_matrix(self, data: np.ndarray, **params) -> np.ndarray:
+        """Compute the kernel matrix and related quantities for a given dataset.
 
-
-        
-    def compute_markov_matrix(self, **params):
-        """
-        Computes the Markov matrix for the given data.
-
-        Args: 
-            Keyword arguments that can override default parameters.
-
+        Args:
+            data (np.ndarray): Input data points of shape (n_samples, n_features).
+            k_neighbors (int): Number of nearest neighbors to consider for the kernel.
+            **params: Additional parameters, including:
+                include_self (bool, optional): Whether to include self-connections in the kernel.
         Returns:
-            The computed Markov matrix.                    
+            tuple: Contains the kernel matrix (K), indices of k-nearest neighbors (knn_indices),
+                 sigma values (sigmas).
         """
-
-        # Get data or raise error if not provided.
-        if "X" in params:
-            self.X = params["X"]
-        elif self.X is None:
-            raise ValueError("data X must be specified.")
-        
-         # Adjust params if specified in params
-        if "delta" in params:             
-            self.delta = params["delta"]
-
+    
         if "include_self" in params:
             self.include_self = params["include_self"]
+
+        if "kernel" in params:
+            self.kernel = params["kernel"]
             
         if "k_neighbors" in params:
             self.k_neighbors = params["k_neighbors"]
 
-        if "n_dims" in params:
-            self.n_dims = params["n_dims"]
-
-
-        self.n_samples, self.n_features = self.X.shape
 
         # Perform dimensionality reduction with PCA if needed.
-        if self.n_dims is not None:
-            pca = decomposition.PCA(n_components=self.n_dims,random_state=self.random_state)
-            pca_features = pca.fit_transform(self.X)
-            self.X = pca_features
+        if "n_pca" in params:
+            self.n_pca = params["n_pca"]
+
+        if self.n_pca is not None:
+            pca = decomposition.PCA(n_components=self.n_pca,random_state=self.random_state)
+            self.X_pca  = pca.fit_transform(data)
+
         elif self.n_features > 500:
-            pca = decomposition.PCA(n_components=100,random_state=self.random_state)
-            pca_features = pca.fit_transform(self.X)
-            self.X = pca_features  
-        
+            self.n_pca = 100
+            pca = decomposition.PCA(n_components=self.n_pca,random_state=self.random_state)
+            self.X_pca = pca.fit_transform(data) 
+
+        if self.X_pca is not None:
+            data = self.X_pca
+        else:
+            data = self.X
+
         # Compute the adjacency matrix based on the chosen kernel.
         if self.kernel == 'box':
-            adjacency_kernel,self.adjacency_knn_indices = box_kernel(data = self.X, k_neighbors = self.k_neighbors)
+            adjacency_kernel,self.adjacency_knn_indices, self.sigmas = box_kernel(data = data, k_neighbors = self.k_neighbors)
         elif self.kernel == 'box2':
-            adjacency_kernel,self.adjacency_knn_indices = box_kernel2(data = self.X, k_neighbors = self.k_neighbors,delta=self.delta)
+            adjacency_kernel,self.adjacency_knn_indices, self.sigmas = box_kernel2(data = data, k_neighbors = self.k_neighbors,delta=self.delta)
         elif self.kernel == 'gauss':
-            adjacency_kernel,self.adjacency_knn_indices = gauss_kernel(data = self.X, k_neighbors = self.k_neighbors, delta=self.delta, alpha=self.alpha)
+            adjacency_kernel,self.adjacency_knn_indices,self.sigmas = gauss_kernel(data = data, k_neighbors = self.k_neighbors, delta=self.delta, alpha=self.alpha)
         elif self.kernel == 'mix':
-            adjacency_kernel,self.adjacency_knn_indices = mix_kernel(data = self.X, k_neighbors = self.k_neighbors, delta=self.delta, alpha=self.alpha)
+            adjacency_kernel,self.adjacency_knn_indices,self.sigmas = mix_kernel(data = data, k_neighbors = self.k_neighbors, delta=self.delta, alpha=self.alpha)
         elif self.kernel == 'umap':
-            adjacency_kernel = scanpy_kernel(data = self.X, knn = self.k_neighbors, method='umap')
+            adjacency_kernel,self.adjacency_knn_indices,self.sigmas = scanpy_kernel(data = data, knn = self.k_neighbors, method='umap')
         elif self.kernel == 'rapids':
-            adjacency_kernel = scanpy_kernel(data = self.X, knn = self.k_neighbors, method='rapids')
+            adjacency_kernel,self.adjacency_knn_indices,self.sigmas = scanpy_kernel(data = data, knn = self.k_neighbors, method='rapids')
         elif self.kernel == 'scanpy_gauss':
-            adjacency_kernel = scanpy_kernel(data = self.X, knn = self.k_neighbors, method='gauss')
+            adjacency_kernel,self.adjacency_knn_indices,self.sigmas = scanpy_kernel(data = data, knn = self.k_neighbors, method='gauss')
         elif self.kernel == 'phate':
-            adjacency_kernel = phate_kernel(data = self.X, knn = self.k_neighbors)
-        
-        # Convert the adjacency matrix to a dense array if necessary.
+            adjacency_kernel,self.adjacency_knn_indices,self.sigmas = phate_kernel(data = data, knn = self.k_neighbors)
+
         if self.n_landmark is None or self.n_landmark == self.n_samples:
             adjacency_kernel = adjacency_kernel.toarray()
 
-        # Store the computed adjacency matrix and return it.
-        self.adjacency_kernel = adjacency_kernel
+        self.K = adjacency_kernel
 
-        return adjacency_kernel
-        
-    def learn_vectors(self, **params):
-        """
-        This method computes the transformed Markov matrix(R) for the given data, and iteratively adjusts the damping factor vector (cv) using a gradient descent method.
+        return self.K, self.sigmas
+    
 
-        Args: 
-            Keyword arguments to override default parameters, such as:
-            alpha: float, the alpha parameter (transition probability)
-            epsilon: float, the convergence threshold for cv
-            beta: float, the learning rate for the gradient descent
-            l1: int, the initial number of iterations for Markov matrix computation
-            l2: int, the number of iterations for PPR matrix
-            X: np.ndarray, the input data matrix
-            cv: np.ndarray, initial damping factor vector
+    def learn_vectors(self, **params) -> np.ndarray:
+        """Learn low-dimensional vectors using kernel matrix and rank matrix computation.
+
+        Args:
+            **params: Additional parameters, including:
+                l (float, optional): Parameter for rank matrix computation.
+                l2 (float, optional): Secondary parameter for rank matrix computation.
+                X (np.ndarray, optional): Input data matrix.
+                k_neighbors (int, optional): Number of nearest neighbors for kernel computation.
+
         Returns:
-            R (np.ndarray): The learned transformed Markov matrix.
-            cv (np.ndarray): The refined damping factor vector.
+            np.ndarray: Computed rank matrix (R) representing the learned vectors.
         """
 
-        # Get parameters from input or use defaults.
-        if "alpha" in params:
-            self.alpha = params["alpha"]
-
+       
+        if "l" in params:
+            self.l = params["l"]
+        if "l2" in params:
+            self.l2 = params["l2"]
         if "X" in params:
             self.X = params["X"]
-        elif self.X is None:
-            raise ValueError("data X must be specified.")
-        
-        if "epsilon" in params:
-            self.epsilon = params["epsilon"]
+        if "k_neighbors" in params:
+            k_neighbors = params["k_neighbors"]
+        else:
+            k_neighbors = self.k_neighbors
+        if "n_landmark" in params:
+            self.n_landmark = params["n_landmark"]
+        if "kernel" in params:
+            kernel = params["kernel"] 
+        else:
+            kernel = self.kernel
 
-        if "beta" in params:
-            self.beta = params["beta"]
-
-        if "l1" in params:                   
-            self.l1 = params["l1"]
-        if "l" in params:                    # alias for l1
-            self.l1 = params["l"]
-        if "l2" in params:                   
-            self.l2 = params["l2"]
-
-        # Preprocess data (add landmarks) for large datasets:
         self.n_samples, self.n_features = self.X.shape
 
+
+        # Preprocess data (add landmarks) for large datasets:
         if self.n_samples >= 5000 and self.n_samples < 10000 and self.n_landmark is None:
             self.n_landmark = 1000
 
         elif self.n_samples >= 10000 and self.n_landmark is None:
             self.n_landmark = 2000
 
-
-        # Compute Markov matrix (adjacency kernel):
-        adjacency_kernel = self.compute_markov_matrix(**params)
-        P = preprocessing.normalize(adjacency_kernel, norm="l1", axis=1)
-
-
-        if "n_landmark" in params:
-            self.n_landmark = params["n_landmark"]
         
-        if self.n_landmark is None or self.n_landmark == self.n_samples:
-            n_samples = self.n_samples
-            self.mode = 1
-
+        if self.K is not None and self.k_neighbors == k_neighbors and self.kernel == kernel:
+            K = self.K
         else:
-            n_landmark = self.n_landmark
-            svd_cluster = cluster.AgglomerativeClustering(n_clusters=n_landmark,connectivity = adjacency_kernel)
+            # Compute Markov matrix (adjacency kernel):
+            self.kernel = kernel
+            self.K,self.sigmas = self.compute_kernel_matrix(data=self.X,k_neighbors=k_neighbors,**params)
+            K = self.K
+
+        if self.n_landmark is None or self.n_landmark == self.n_samples:
+            self.mode = 1
+        else:
+            P = preprocessing.normalize(K, norm="l1", axis=1)
+            svd_cluster = cluster.AgglomerativeClustering(n_clusters=self.n_landmark,connectivity = K)
             self.cluster_labels = svd_cluster.fit_predict(P @ self.X)
 
-            Pmm,Pnm = compute_landmark_operator(adjacency_kernel,self.cluster_labels,random_state = self.random_state)
-            P = Pmm 
+            Pmm,Pnm = compute_landmark_operator(K,self.cluster_labels,random_state = self.random_state)
+            K = Pmm
             self.Pnm = Pnm
-            n_samples = n_landmark
             self.mode = 2
-        
-        # Initialize cv (damping factor vector).
-        if "cv"  in params:
-            cv = params["cv"]
-        elif self.cv == None:
-            cv = stats.uniform.rvs(loc=0.5, scale=0.2, size=n_samples, random_state= self.random_state).round(2)
 
-        if  self.mode == 1:
-            Phi,lamb,Psi = eigen_kernel(self.adjacency_kernel)
-            if self.l1 is None:
-                self.l1 = calc_l(lamb)
-            if self.l2 is None:
-                self.l2 = self.l1 + 1
-            Lamb_l = np.power(lamb,self.l2)
-            A = Phi * Lamb_l @ Psi
+        self.R = compute_rank_matrix(
+            K=K,
+            l1=self.l,
+            l2=self.l2,
+            mode = self.mode,
+            beta= self.beta,
+            epsilon = self.epsilon,
+            random_state = self.random_state,
+            verbose = self.verbose
+        )
 
-        elif  self.mode == 2:
-            Phi,lamb,Psi = eigen_kernel2(P)
-            if self.l1 is None:
-                self.l1 = calc_l(lamb)
-            if self.l2 is None:
-                self.l2 = self.l1 + 1
-            Lamb_l = np.power(lamb,self.l2)
-            A = Phi * Lamb_l @ Psi
+        return self.R
 
-        # Iterate to learn cv and construct R.
-        j  =  0
-        while True:
-            j = j  + 1
-
-            # Compute rank matrix R and its differential
-            R,dif_R = compute_infty_R(Phi,lamb,Psi,cv,self.l1)
-                
-            # Compute gradient step
-            Q = R.copy()
-            Q[Q==0] = np.inf
-            Dif = - A/Q * dif_R
-            dif_v = Dif.sum(axis=1) 
-            old_cv  = cv
-            cv = old_cv - self.beta * dif_v
-
-            # Check and handle boundary conditions for cv
-            count_high_cv = (cv>1).sum() 
-            count_low_cv = (cv<0).sum()
-            count_cv = count_high_cv + count_low_cv
-            if count_cv > 0:
-                if count_high_cv > 0:
-                    if self.verbose > 0:
-                        warnings.warn('Warning Message: there are %d samples with cv > 0.99' % (count_high_cv))
-                    cv[cv>1] = 0.99
-                if  count_low_cv > 0:
-                    if self.verbose > 0:
-                        warnings.warn('Warning Message: there are %d samples with cv < 0.01' % (count_low_cv))
-                    cv[cv<0] = 0.01
-                if j > 30:
-                    break
-
-            # Check for convergence                    
-            diff = cv - old_cv 
-            if self.verbose > 0:
-                if j % 10 == 0:
-                    print("The number of iterations of gradient descent method is:",j,
-                      "the average cv is ",np.mean(cv), " and the max diff is", max(np.abs(diff)))
-
-            if (np.abs(diff)<self.epsilon).all():
-                break
-
-            if j > 30:
-                break        
-
-        # Update class attributes with the learned cv and R    
-        self.cv = cv
-        self.R = R
-
-        return R,cv
     
+    def compute_dist_matrix(self,**params) -> np.ndarray:
+        """Compute a distance matrix based on learned vectors and similarity measures.
 
+        Args:
+            **params: Additional parameters passed to the learn_vectors method.
 
-    def compute_embedding(self, **params):
-        """        
-        Computes the diffusion embedding of the data using the learned Markov matrix (R) and constructs the manifold distance matrix (H). 
-        This function calls `learn_vectors` to obtain the transformed Markov matrix (R) 
-        and the damping factor vector (cv), normalizes the matrix, and then computes pairwise distances in the diffusion embedding space.
-
-        Args: 
-            Keyword arguments that can be used to override default parameters.
         Returns:
-            np.ndarray: The diffusion embedding (manifold distance matrix) of the data.
+            np.ndarray: Distance matrix (dists) derived from the similarity matrix.
         """
+        
+        R = self.learn_vectors(**params)
 
-
-        R,cv = self.learn_vectors(**params)
-        P = preprocessing.normalize(R, norm="l1", axis=1)
         A = np.sqrt(R)
-        G = A @ A.T
-        
-        H = -2 * np.log(G)
+        self.sims = A @ A.T
+        np.fill_diagonal(self.sims,1)
+        H = -2 *  np.log(self.sims) 
         H[H<0] = 0
-        
         np.fill_diagonal(H,0)
-        self.G = G
         self.dists = H
+
         return self.dists
     
+
+    def reduce_dim(self, **params) -> np.ndarray:
+
+        """Reduce dimensionality of data using specified solver (MDS, UMAP, or Elastic Embedding).
+
+        Args:
+            **params: Additional parameters, including:
+                n_components (int, optional): Number of dimensions for the output embedding.
+                solver (str, optional): Dimensionality reduction method ('mds',  'umap', 'ee').
+                min_dist (float, optional): Minimum distance parameter for UMAP.
+
+        Returns:
+            np.ndarray: Low-dimensional embedding of shape (n_samples, n_components).
+        """
+
+        if "n_components" in params:
+            self.n_components = params["n_components"]
+
+        if "solver" in params: 
+            self.solver = params['solver']
+
+        if self.solver == 'mds' or self.solver == 'mds2':
+            Y_classic = classic(self.dists, n_components = self.n_components, random_state = self.random_state)
+            mds = manifold.MDS(n_components = self.n_components, dissimilarity='precomputed',metric = True,normalized_stress = False,random_state = self.random_state)
+            
+            if self.n_landmark is None or self.n_landmark == self.n_samples:
+                self.Y_ = mds.fit_transform(self.dists,init=Y_classic)
+            elif self.solver == 'mds':
+                self.Ym =  mds.fit_transform(self.dists,init=Y_classic)
+                self.Y_ = self.Pnm @ self.Ym
+
+            elif self.solver == 'mds2':
+                R2 = self.Pnm @ self.R
+                R2[R2<0] = 0
+                A = np.sqrt(R2)
+                G = A @ A.T
+                H = -2 * np.log(G)
+                H[H<0] = 0
+                np.fill_diagonal(H,0)
+
+                Y_classic = classic(H, n_components = self.n_components, random_state = self.random_state)
+                mds = manifold.MDS(n_components = self.n_components, dissimilarity='precomputed',metric = True,normalized_stress = False,random_state = self.random_state)
+                self.Y_ = mds.fit_transform(H,init=Y_classic)
+
+        if self.solver == "umap" or self.solver == "UMAP":
+            import umap
+            if "min_dist" in params: 
+                self.min_dist = params['min_dist']
+            if self.min_dist == None:
+                self.min_dist = 0.3
+            if self.n_landmark is None or self.n_landmark == self.n_samples: 
+                self.Y_ = umap.UMAP(metric='precomputed',n_components=self.n_components,min_dist=self.min_dist,random_state =self.random_state).fit_transform(self.dists)
+            else:
+                Yl = umap.UMAP(metric='precomputed',n_components=self.n_components,min_dist=self.min_dist,random_state =self.random_state).fit_transform(self.dists)
+                self.Y_ = self.Pnm @ Yl
+
+        if self.solver == 'ee' or self.solver == 'EE':
+            Y_classic = classic(self.dists, n_components = self.n_components, random_state = self.random_state)
+            if "lamb" in params: 
+                lamb = params['lamb']
+            else:
+                lamb = 1
+            if self.n_landmark is None or self.n_landmark == self.n_samples: 
+                self.Y_ = elastic_embedding(self.sims,self.dists,self.n_components,Y_init = Y_classic, lamb=lamb,num_iters=100,verbose=self.verbose)
+            else:
+                self.Ym = elastic_embedding(self.sims,self.dists,self.n_components,Y_init = Y_classic, lamb=lamb,num_iters=100,verbose=self.verbose)
+                self.Y_ = self.Pnm @ self.Ym
+
+        
+        return self.Y_
+    
+
     def order_cells(self, **params):
         """
         Orders cells based on their distances to other cells in the dataset. This is typically used
@@ -386,6 +335,7 @@ class DTNE(object):
 
         Args:
             root_cells (list): A list of root cell indices that serve as starting points for ordering.
+            terminal_cells(list): A list of terminal cell indices that serve as end points for ordering.
 
         Returns:
             np.ndarray: A numpy array containing the normalized distances (diff_time) of each cell  relative to the root cells.
@@ -399,37 +349,65 @@ class DTNE(object):
             self.root_cells = params["root_cells"]
         elif self.root_cells is None:
             raise ValueError("root_cells must be specified.")
+        
+        if "terminal_cells" in params:
+            self.terminal_cells = params["terminal_cells"]
          
+        # root cells
         root_cells = self.root_cells
-
         if self.n_landmark is None or self.n_landmark == self.n_samples:
             if len(root_cells) > 1:
-
                 diff_dists = np.sqrt(self.dists[root_cells,:])
                 sum_dists = np.sum(diff_dists,axis=0)                
             else:
-
                 sum_dists = np.sqrt(self.dists[root_cells,:])[0]
 
         else:
             if len(root_cells) == 1:
                 root_cells = self.adjacency_knn_indices[root_cells,:3]
-
+            if len(root_cells) > 1:
+                root_cells = np.array(root_cells).reshape(-1,1)
             R = self.Pnm @ self.R
             A = np.sqrt(R)
             G = A[root_cells,:] @ A.T
 
             H = -2 * np.log(G)
             H[H<0] = 0
-
-
             diff_dists = np.sqrt(H).sum(axis=0)
-            sum_dists = diff_dists.sum(axis=0)
+            sum_dists = diff_dists.sum(axis=0)        
 
         # # Normalize distances between 0 and 1
         min_dist = np.min(sum_dists)
         max_dist = np.max(sum_dists)
         diff_time = (sum_dists - min_dist)/(max_dist - min_dist)
+
+
+        # terminal_cells
+        if self.terminal_cells is not None:
+            if self.n_landmark is None or self.n_landmark == self.n_samples:
+                if len(self.terminal_cells) > 1:
+                    termi_dists = np.sqrt(self.dists[self.terminal_cells,:])
+                    tsum_dists = np.sum(termi_dists,axis=0)                
+                else:
+                    tsum_dists = np.sqrt(self.dists[self.terminal_cells,:])[0]
+            else:
+                if len(self.terminal_cells) == 1:
+                    termi_cells = self.adjacency_knn_indices[self.terminal_cells,:3]
+                else:
+                    termi_cells = np.array(self.terminal_cells).reshape(-1,1)
+                G2 = A[termi_cells,:] @ A.T
+
+                H2 = -2 * np.log(G2)
+                H2[H2<0] = 0
+                termi_dists = np.sqrt(H2).sum(axis=0)
+                tsum_dists = termi_dists.sum(axis=0) 
+            
+            tmin_dist = np.min(tsum_dists)
+            tmax_dist = np.max(tsum_dists)
+            termi_time = (tsum_dists - tmin_dist)/(tmax_dist - tmin_dist)   
+
+            pt = diff_time/(termi_time + diff_time)
+            diff_time = (pt-min(pt))/(max(pt)-min(pt))
 
         self.df_times = diff_time
         return diff_time
@@ -485,55 +463,6 @@ class DTNE(object):
 
             db_instance = cluster.DBSCAN(eps=eps, min_samples=min_samples,metric='precomputed').fit(self.dists)
             labels = db_instance.labels_
-        
-        # elif cluster_method == "leiden" or cluster_method == "louvain":
-        #     if "resolution" in params:
-        #         resolution = params["resolution"]
-        #     else:
-        #         resolution = 1
-        #     if "use_weights" in params:
-        #         use_weights = params["use_weights"]
-        #     else:
-        #         use_weights = True
-
-        #     if "n_neighbors" in params:
-        #         n_neighbors = params["n_neighbors"]
-        #     else:
-        #         n_neighbors = self.k_neighbors
-
-        #     sorted_indices = np.argsort(self.G, axis=1)[:, ::-1]
-        #     k_indices = sorted_indices[:, :n_neighbors]
-        #     k_similarities = np.take_along_axis(self.G, k_indices, axis=1)
-
-        #     if self.n_landmark is None or self.n_landmark == self.n_samples:
-        #         n1 = self.n_samples
-        #     else:
-        #         n1 = self.n_landmark
-
-        #     indptr = range(0, (n1 + 1) * n_neighbors, n_neighbors)
-        #     k_matrix = sparse.csr_matrix((k_similarities.flatten(), k_indices.flatten(), indptr), shape=(n1, n1))
-        #     w_matrix = k_matrix.maximum(k_matrix.T) 
-        #     w_matrix = w_matrix.astype(np.float32)
-        #     w_matrix = preprocessing.normalize(w_matrix, norm="l1", axis=1)
-
-        #     import scanpy as sc
-        #     adata = sc.AnnData(X = self.G) # self.G no meaning, just give "n_obs"
-        #     adata.uns["neighbors"] = {'connectivities_key': 'connectivities'}
-        #     adata.obsp["connectivities"] = w_matrix
-            
-        #     # U, s, V = sparse.linalg.svds(self.dists, k=10)
-        #     # S = s * np.identity(10)
-        #     # Y = U @ np.sqrt(S)
-        #     # import scanpy as sc
-        #     # adata = sc.AnnData(X = Y)
-        #     # sc.pp.neighbors(adata,n_neighbors=n_neighbors)
-
-        #     if cluster_method == "leiden":
-        #         sc.tl.leiden(adata, resolution = resolution, use_weights = use_weights)
-        #         labels = np.array(adata.obs['leiden'].values).astype('int')
-        #     elif cluster_method == "louvain":
-        #         sc.tl.louvain(adata,resolution = resolution, use_weights = use_weights)
-        #         labels = np.array(adata.obs['louvain'].values).astype('int')
 
 
         if self.n_landmark is None or self.n_landmark == self.n_samples:
@@ -544,99 +473,37 @@ class DTNE(object):
 
         return clusters
     
+
     
-
-
-    def fit(self,  **params):
-        """        
-        Fits the diffusion embedding and computes the low-dimensional visualization of the data using the specified dimensionality reduction method (e.g., MDS, UMAP, SGD).
-        This function computes pairwise distances using `compute_embedding` and then applies dimensionality reduction to project the data into a lower-dimensional space.
-
-        Args: 
-            n_components (int, optional): Number of dimensions for the low-dimensional embedding.
-                Defaults to `self.n_components`.
-            random_state (int, optional): Random seed for the dimensionality reduction algorithm.
-                Defaults to `self.random_state`.
-            solver (str, optional): The solver method to use for dimensionality reduction, can be:
-                * "mds" (Multidimensional Scaling)
-                * "sgd" (Stochastic Gradient Descent for MDS)
-                * "umap" (Uniform Manifold Approximation and Projection)
-            min_dist (float, optional): Minimum distance for UMAP.
-            root_cells (list, optional): Indices of root cells for cell ordering (used for pseudotime analysis).
-
-        Returns:
-            self: The object itself, enabling method chaining (e.g., `obj.fit().transform()`).
-        """
-        
-        if "n_components" in params:
-            self.n_components = params["n_components"]
-        n_components = self.n_components
-
-        if "random_state" in params:
-            self.random_state = params["random_state"]
-        random_state = self.random_state
-        
-        if "solver" in params: 
-            self.solver = params['solver']
-        
-        if self.solver == 'mds' or self.dists == None:
-            self.dists = self.compute_embedding(**params)
-        dists = self.dists
-
-
-        # Perform dimensionality reduction based on the chosen solver.
-        if self.solver == 'mds':
-            Y_classic = classic(dists, n_components = n_components, random_state = random_state)
-            mds = manifold.MDS(n_components = n_components, dissimilarity='precomputed',metric = True,normalized_stress = False,random_state = random_state)
-            if self.n_landmark is None or self.n_landmark == self.n_samples:
-                self.Y_ = mds.fit_transform(dists,init=Y_classic)
-            else:
-                Yl =  mds.fit_transform(dists,init=Y_classic)
-                self.Y_ = self.Pnm @ Yl
-        elif self.solver == 'sgd':
-            import s_gd2
-            if self.n_landmark is None or self.n_landmark == self.n_samples:
-                self.Y_ = s_gd2.mds_direct(self.n_samples, dists, w=None, init=Y_classic, random_seed=random_state)
-            else:
-                Yl = s_gd2.mds_direct(self.n_landmark, dists, w=None, init=Y_classic, random_seed=random_state)
-                self.Y_ = self.Pnm @ Yl
-        elif self.solver == 'umap':
-            import umap
-            if "min_dist" in params: 
-                self.min_dist = params['min_dist']
-            if self.min_dist == None:
-                self.min_dist = 0.3
-            if self.n_landmark is None or self.n_landmark == self.n_samples: 
-                self.Y_ = umap.UMAP(metric='precomputed',min_dist=self.min_dist,random_state =random_state).fit_transform(dists)
-            else:
-                Yl = umap.UMAP(metric='precomputed',min_dist=self.min_dist,random_state =random_state).fit_transform(dists)
-                self.Y_ = self.Pnm @ Yl
-
-
-        if "root_cells" in params:
-            diff_time = self.order_cells(**params)
-
-        return self
-    
-
-
-    def fit_transform(self, X):
-        """        
-        Fits the diffusion embedding and computes the low-dimensional visualization of the data in a single step.
-        This function combines both the fitting and transformation steps into one. It fits the model to the input data
-        and then returns the low-dimensional embedding.
+    def fit(self, X: np.ndarray,**params) -> None:
+        """Fit the model to the input data by computing the distance matrix and reducing dimensionality.
 
         Args:
-            X (np.ndarray): The data to be embedded. This should be an array where each row represents a sample and 
-                        each column represents a feature.
+            X (np.ndarray): Input data of shape (n_samples, n_features).
+            **params: Additional parameters passed to compute_dist_matrix and reduce_dim methods.
+
         Returns:
-            np.ndarray: The low-dimensional embedding of the data after applying the chosen dimensionality reduction method.
+            self: The fitted model instance.
         """
 
         self.X = X
+        self.compute_dist_matrix(**params)
+        
+        self.reduce_dim(**params)
+        
+        return self
+    
+    def fit_transform(self,X: np.ndarray) -> np.ndarray:
 
-        self.fit(X = self.X) 
+        """Fit the model to the input data and return the low-dimensional embedding.
 
-        self.mark = 1 
+        Args:
+            X (np.ndarray): Input data of shape (n_samples, n_features).
 
+        Returns:
+            np.ndarray: Low-dimensional embedding of shape (n_samples, n_components).
+        """
+
+        self.fit(X = X) 
+        
         return self.Y_
